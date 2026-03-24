@@ -116,37 +116,6 @@ const parseVideoIds = (text) => {
   return [...ids];
 };
 
-// --- oEmbed metadata (no API key needed) ---
-const fetchOembedMeta = async (videoId) => {
-  try {
-    const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const data = await res.json();
-    return {
-      video_id: videoId,
-      title: data.title || videoId,
-      channel: data.author_name || 'Unknown',
-      thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-      url: `https://www.youtube.com/watch?v=${videoId}`,
-      view_count: '—',
-      duration: '—',
-      durationSeconds: 0
-    };
-  } catch {
-    return {
-      video_id: videoId,
-      title: videoId,
-      channel: 'Unknown',
-      thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-      url: `https://www.youtube.com/watch?v=${videoId}`,
-      view_count: '—',
-      duration: '—',
-      durationSeconds: 0
-    };
-  }
-};
-
 // --- Consensus Matrix ---
 const MATRIX_STOP_WORDS = new Set([
   'the','is','in','and','to','a','of','for','it','with','as','you','that','this','on',
@@ -230,16 +199,15 @@ const extractGoldenNuggets = (processedVideos) => {
 export default function App() {
   const envKey = import.meta.env.VITE_YOUTUBE_API_KEY;
   const [apiKey, setApiKey] = useState(envKey || localStorage.getItem('courseforge_youtube_key') || '');
-  const hasApiKey = !!(envKey || localStorage.getItem('courseforge_youtube_key'));
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState((envKey || localStorage.getItem('courseforge_youtube_key')) ? 1 : 0);
   
   const [topic, setTopic] = useState('');
   const [maxResults, setMaxResults] = useState(5);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Input mode: 'search', 'urls' (YouTube link import), or 'paste' (no API key needed)
-  const [inputMode, setInputMode] = useState('paste');
+  // Input mode: 'search' (default) or 'urls' (YouTube link import)
+  const [inputMode, setInputMode] = useState('search');
   const [urlInput, setUrlInput] = useState('');
 
   // Advanced Filters
@@ -285,7 +253,7 @@ export default function App() {
     setStep(1);
     setTopic('');
     setUrlInput('');
-    setInputMode('paste');
+    setInputMode('search');
     setVideos([]);
     setSelectedIds(new Set());
     setCompiledData({ document: '', wordCount: 0 });
@@ -425,63 +393,6 @@ export default function App() {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  // Free YouTube search via Invidious (no API key needed)
-  const INVIDIOUS_INSTANCES = [
-    'https://vid.puffyan.us',
-    'https://invidious.fdn.fr',
-    'https://y.com.sb',
-    'https://invidious.nerdvpn.de',
-  ];
-
-  const handleFreeSearch = async (e) => {
-    e.preventDefault();
-    if (!topic.trim()) return;
-
-    setIsLoading(true);
-    setError(null);
-
-    for (const instance of INVIDIOUS_INSTANCES) {
-      try {
-        const searchUrl = `${instance}/api/v1/search?q=${encodeURIComponent(topic)}&type=video&sort_by=relevance`;
-        const res = await fetch(searchUrl);
-        if (!res.ok) continue;
-        const data = await res.json();
-
-        if (!data || data.length === 0) continue;
-
-        const results = data.slice(0, parseInt(maxResults)).map(item => ({
-          video_id: item.videoId,
-          title: item.title,
-          channel: item.author || 'Unknown',
-          thumbnail: item.videoThumbnails?.find(t => t.quality === 'high')?.url
-            || item.videoThumbnails?.[0]?.url
-            || `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`,
-          url: `https://www.youtube.com/watch?v=${item.videoId}`,
-          view_count: formatViews(item.viewCount || 0),
-          duration: item.lengthSeconds > 0
-            ? (item.lengthSeconds >= 3600
-              ? `${Math.floor(item.lengthSeconds/3600)}:${String(Math.floor((item.lengthSeconds%3600)/60)).padStart(2,'0')}:${String(item.lengthSeconds%60).padStart(2,'0')}`
-              : `${Math.floor(item.lengthSeconds/60)}:${String(item.lengthSeconds%60).padStart(2,'0')}`)
-            : '—',
-          durationSeconds: item.lengthSeconds || 0
-        }));
-
-        if (results.length === 0) continue;
-
-        setVideos(results);
-        setSelectedIds(new Set(results.map(v => v.video_id)));
-        setStep(2);
-        setIsLoading(false);
-        return;
-      } catch {
-        continue;
-      }
-    }
-
-    setError("Could not search YouTube. Please try again in a moment or use the YouTube Links mode.");
-    setIsLoading(false);
   };
 
   const handleGetUrls = () => {
@@ -666,9 +577,9 @@ export default function App() {
             </button>
           </div>
 
-          {!envKey && step !== 0 && step !== 3 && (
+          {!envKey && step > 0 && step !== 3 && (
             <button onClick={() => setStep(0)} className="text-xs text-gray-500 hover:text-amber-500 transition-colors flex items-center gap-1">
-              <Key className="w-3 h-3"/> {apiKey.trim() ? 'Change API Key' : 'Add API Key'}
+              <Key className="w-3 h-3"/> Change API Key
             </button>
           )}
         </div>
@@ -705,9 +616,6 @@ export default function App() {
                   Save & Continue
                 </button>
               </form>
-              <button onClick={() => setStep(1)} className="w-full mt-3 text-sm text-gray-500 hover:text-amber-500 transition-colors py-2">
-                Skip — I'll use Free Search (no key needed)
-              </button>
             </div>
           </div>
         )}
@@ -720,57 +628,20 @@ export default function App() {
             {/* Mode Toggle */}
             <div className="flex gap-1 mb-6 bg-[#1a1a1a] border border-gray-800 rounded-xl p-1 w-fit">
               <button
-                onClick={() => setInputMode('paste')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${inputMode === 'paste' ? 'bg-amber-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
-              >
-                <Search className="w-4 h-4" /> Free Search
-              </button>
-              <button
-                onClick={() => { if (!apiKey.trim()) { setError('Search requires a YouTube Data API key. Enter it via "Change API Key" above, or use Paste & Parse instead.'); return; } setInputMode('search'); }}
+                onClick={() => setInputMode('search')}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${inputMode === 'search' ? 'bg-amber-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
               >
                 <Search className="w-4 h-4" /> Search by Topic
               </button>
               <button
-                onClick={() => { if (!apiKey.trim()) { setError('URL Import requires a YouTube Data API key for metadata. Use Paste & Parse instead (no key needed).'); return; } setInputMode('urls'); }}
+                onClick={() => setInputMode('urls')}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${inputMode === 'urls' ? 'bg-amber-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
               >
                 <Link className="w-4 h-4" /> YouTube Links
               </button>
             </div>
 
-            {inputMode === 'paste' ? (
-              <form onSubmit={handleFreeSearch} className="space-y-4">
-                <div className="flex flex-col sm:flex-row gap-4">
-                  <div className="flex-1 relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
-                    <input
-                      type="text"
-                      value={topic}
-                      onChange={(e) => setTopic(e.target.value)}
-                      placeholder="e.g. 'Advanced Negotiation Tactics'"
-                      className="w-full bg-[#1a1a1a] border border-gray-700 rounded-lg py-3 pl-10 pr-4 text-white focus:outline-none focus:border-amber-500 transition-colors"
-                      required
-                    />
-                  </div>
-                  <select
-                    value={maxResults}
-                    onChange={(e) => setMaxResults(e.target.value)}
-                    className="bg-[#1a1a1a] border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-amber-500"
-                  >
-                    <option value="5">Top 5 videos</option>
-                    <option value="10">Top 10 videos</option>
-                    <option value="20">Top 20 videos</option>
-                  </select>
-                </div>
-
-                <button type="submit" disabled={isLoading} className="w-full bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:hover:bg-amber-600 text-white font-medium py-3 rounded-lg flex justify-center items-center gap-2 transition-colors">
-                  {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
-                  {isLoading ? 'Searching YouTube...' : 'Search YouTube'}
-                </button>
-                <p className="text-xs text-gray-600 text-center">No API key needed. Select results then get URLs or extract transcripts.</p>
-              </form>
-            ) : inputMode === 'search' ? (
+            {inputMode === 'search' ? (
               <form onSubmit={handleSearch} className="space-y-4">
                 <div className="flex flex-col sm:flex-row gap-4">
                   <div className="flex-1 relative">
