@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   Search, Youtube, AlertTriangle, CheckSquare, Square,
   Loader2, Download, Copy, FileText, Check, ChevronRight, FileDown, Key,
-  Filter, Zap, GitMerge, RotateCcw, Link, ClipboardPaste
+  Filter, Zap, GitMerge, RotateCcw, Link, ClipboardList
 } from 'lucide-react';
 
 // --- Utility Functions ---
@@ -427,34 +427,70 @@ export default function App() {
     }
   };
 
-  const handlePasteImport = async (e) => {
+  // Free YouTube search via Invidious (no API key needed)
+  const INVIDIOUS_INSTANCES = [
+    'https://vid.puffyan.us',
+    'https://invidious.fdn.fr',
+    'https://y.com.sb',
+    'https://invidious.nerdvpn.de',
+  ];
+
+  const handleFreeSearch = async (e) => {
     e.preventDefault();
-    const videoIds = parseVideoIds(urlInput);
-    if (videoIds.length === 0) {
-      setError("No valid YouTube video IDs found. Paste YouTube URLs (one per line).");
-      return;
-    }
+    if (!topic.trim()) return;
 
     setIsLoading(true);
     setError(null);
-    try {
-      const results = await Promise.all(videoIds.map(id => fetchOembedMeta(id)));
-      const valid = results.filter(Boolean);
 
-      if (valid.length === 0) throw new Error("Could not fetch metadata for any of the provided videos.");
+    for (const instance of INVIDIOUS_INSTANCES) {
+      try {
+        const searchUrl = `${instance}/api/v1/search?q=${encodeURIComponent(topic)}&type=video&sort_by=relevance`;
+        const res = await fetch(searchUrl);
+        if (!res.ok) continue;
+        const data = await res.json();
 
-      if (!topic.trim()) {
-        setTopic(`YouTube Import (${valid.length} video${valid.length !== 1 ? 's' : ''})`);
+        if (!data || data.length === 0) continue;
+
+        const results = data.slice(0, parseInt(maxResults)).map(item => ({
+          video_id: item.videoId,
+          title: item.title,
+          channel: item.author || 'Unknown',
+          thumbnail: item.videoThumbnails?.find(t => t.quality === 'high')?.url
+            || item.videoThumbnails?.[0]?.url
+            || `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`,
+          url: `https://www.youtube.com/watch?v=${item.videoId}`,
+          view_count: formatViews(item.viewCount || 0),
+          duration: item.lengthSeconds > 0
+            ? (item.lengthSeconds >= 3600
+              ? `${Math.floor(item.lengthSeconds/3600)}:${String(Math.floor((item.lengthSeconds%3600)/60)).padStart(2,'0')}:${String(item.lengthSeconds%60).padStart(2,'0')}`
+              : `${Math.floor(item.lengthSeconds/60)}:${String(item.lengthSeconds%60).padStart(2,'0')}`)
+            : '—',
+          durationSeconds: item.lengthSeconds || 0
+        }));
+
+        if (results.length === 0) continue;
+
+        setVideos(results);
+        setSelectedIds(new Set(results.map(v => v.video_id)));
+        setStep(2);
+        setIsLoading(false);
+        return;
+      } catch {
+        continue;
       }
-
-      setVideos(valid);
-      setSelectedIds(new Set(valid.map(v => v.video_id)));
-      setStep(2);
-    } catch (err) {
-      setError(err.message || "Failed to fetch video details.");
-    } finally {
-      setIsLoading(false);
     }
+
+    setError("Could not search YouTube. Please try again in a moment or use the YouTube Links mode.");
+    setIsLoading(false);
+  };
+
+  const handleGetUrls = () => {
+    const selected = videos.filter(v => selectedIds.has(v.video_id));
+    if (selected.length === 0) return;
+    const urlList = selected.map(v => v.url).join('\n');
+    navigator.clipboard.writeText(urlList);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const toggleSelection = (id) => {
@@ -670,7 +706,7 @@ export default function App() {
                 </button>
               </form>
               <button onClick={() => setStep(1)} className="w-full mt-3 text-sm text-gray-500 hover:text-amber-500 transition-colors py-2">
-                Skip — I'll use Paste & Parse (no key needed)
+                Skip — I'll use Free Search (no key needed)
               </button>
             </div>
           </div>
@@ -687,7 +723,7 @@ export default function App() {
                 onClick={() => setInputMode('paste')}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${inputMode === 'paste' ? 'bg-amber-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
               >
-                <ClipboardPaste className="w-4 h-4" /> Paste & Parse
+                <Search className="w-4 h-4" /> Free Search
               </button>
               <button
                 onClick={() => { if (!apiKey.trim()) { setError('Search requires a YouTube Data API key. Enter it via "Change API Key" above, or use Paste & Parse instead.'); return; } setInputMode('search'); }}
@@ -704,32 +740,35 @@ export default function App() {
             </div>
 
             {inputMode === 'paste' ? (
-              <form onSubmit={handlePasteImport} className="space-y-4">
-                <div>
-                  <input
-                    type="text"
-                    value={topic}
-                    onChange={(e) => setTopic(e.target.value)}
-                    placeholder="Topic label (optional) — e.g. 'Negotiation Tactics'"
-                    className="w-full bg-[#1a1a1a] border border-gray-700 rounded-lg py-3 px-4 text-white focus:outline-none focus:border-amber-500 transition-colors mb-4"
-                  />
-                  <textarea
-                    value={urlInput}
-                    onChange={(e) => setUrlInput(e.target.value)}
-                    placeholder={"Search YouTube yourself, then paste the video URLs here (one per line):\nhttps://www.youtube.com/watch?v=abc123\nhttps://youtu.be/xyz789\n..."}
-                    rows={8}
-                    className="w-full bg-[#1a1a1a] border border-gray-700 rounded-lg py-3 px-4 text-white font-mono text-sm focus:outline-none focus:border-amber-500 transition-colors resize-none"
-                    required
-                  />
-                  <p className="text-xs text-gray-600 mt-2">
-                    No API key needed. {urlInput.trim() ? `${parseVideoIds(urlInput).length} video(s) detected` : 'Supports youtube.com/watch, youtu.be, and embed links.'}
-                  </p>
+              <form onSubmit={handleFreeSearch} className="space-y-4">
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="flex-1 relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                    <input
+                      type="text"
+                      value={topic}
+                      onChange={(e) => setTopic(e.target.value)}
+                      placeholder="e.g. 'Advanced Negotiation Tactics'"
+                      className="w-full bg-[#1a1a1a] border border-gray-700 rounded-lg py-3 pl-10 pr-4 text-white focus:outline-none focus:border-amber-500 transition-colors"
+                      required
+                    />
+                  </div>
+                  <select
+                    value={maxResults}
+                    onChange={(e) => setMaxResults(e.target.value)}
+                    className="bg-[#1a1a1a] border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-amber-500"
+                  >
+                    <option value="5">Top 5 videos</option>
+                    <option value="10">Top 10 videos</option>
+                    <option value="20">Top 20 videos</option>
+                  </select>
                 </div>
 
-                <button type="submit" disabled={isLoading || parseVideoIds(urlInput).length === 0} className="w-full bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:hover:bg-amber-600 text-white font-medium py-3 rounded-lg flex justify-center items-center gap-2 transition-colors">
-                  {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ClipboardPaste className="w-5 h-5" />}
-                  {isLoading ? 'Fetching Video Info...' : `Parse ${parseVideoIds(urlInput).length || ''} Video${parseVideoIds(urlInput).length !== 1 ? 's' : ''}`}
+                <button type="submit" disabled={isLoading} className="w-full bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:hover:bg-amber-600 text-white font-medium py-3 rounded-lg flex justify-center items-center gap-2 transition-colors">
+                  {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
+                  {isLoading ? 'Searching YouTube...' : 'Search YouTube'}
                 </button>
+                <p className="text-xs text-gray-600 text-center">No API key needed. Select results then get URLs or extract transcripts.</p>
               </form>
             ) : inputMode === 'search' ? (
               <form onSubmit={handleSearch} className="space-y-4">
@@ -833,11 +872,15 @@ export default function App() {
                   ← Back to Search
                 </button>
                 <h2 className="text-2xl font-bold text-white">Select Sources</h2>
-                <p className="text-gray-400 text-sm mt-1">{inputMode === 'search' ? `Found top English videos for "${topic}"` : `Imported ${videos.length} video${videos.length !== 1 ? 's' : ''} from YouTube links`}</p>
+                <p className="text-gray-400 text-sm mt-1">{inputMode === 'urls' ? `Imported ${videos.length} video${videos.length !== 1 ? 's' : ''} from YouTube links` : `Found ${videos.length} videos for "${topic}"`}</p>
               </div>
               <div className="flex items-center gap-4">
                 <button onClick={toggleAll} className="text-sm text-gray-400 hover:text-white flex items-center gap-2 transition-colors">
                   {selectedIds.size === videos.length ? <CheckSquare className="w-4 h-4"/> : <Square className="w-4 h-4"/>} Select All
+                </button>
+                <button onClick={handleGetUrls} disabled={selectedIds.size === 0} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white px-5 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors text-sm">
+                  {copied ? <Check className="w-4 h-4 text-green-400" /> : <ClipboardList className="w-4 h-4" />}
+                  {copied ? 'Copied!' : `Get URLs (${selectedIds.size})`}
                 </button>
                 <button onClick={handleProcess} disabled={selectedIds.size === 0} className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white px-6 py-2 rounded-lg flex items-center gap-2 font-medium transition-colors">
                   Extract Transcripts <ChevronRight className="w-4 h-4" />
